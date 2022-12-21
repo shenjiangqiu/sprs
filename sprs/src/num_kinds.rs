@@ -7,6 +7,8 @@ use std::{
     fmt,
     ops::{Add, Neg},
 };
+
+use crate::MulAcc;
 /// the type for Pattern data, it's special which contains no data
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct Pattern;
@@ -14,14 +16,27 @@ pub struct Pattern;
 impl Add for Pattern {
     type Output = Pattern;
     fn add(self, _other: Pattern) -> Pattern {
-        Pattern {}
+        Pattern
     }
 }
 impl Neg for Pattern {
     type Output = Pattern;
     fn neg(self) -> Pattern {
-        Pattern {}
+        Pattern
     }
+}
+impl num_traits::Zero for Pattern {
+    fn zero() -> Pattern {
+        Pattern
+    }
+    /// all patterns are zero
+    fn is_zero(&self) -> bool {
+        true
+    }
+}
+
+impl MulAcc for Pattern {
+    fn mul_acc(&mut self, _a: &Self, _b: &Self) {}
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -100,3 +115,24 @@ macro_rules! complex_prim_kind_impl {
 
 complex_prim_kind_impl!(Complex32);
 complex_prim_kind_impl!(Complex64);
+
+#[cfg(test)]
+mod tests {
+    use num_traits::Zero;
+
+    use super::*;
+
+    #[test]
+    fn test_pattern() {
+        assert_eq!(Pattern::zero(), Pattern);
+        assert_eq!(Pattern.is_zero(), true);
+        let mut pattern = Pattern;
+        pattern.set_zero();
+        assert_eq!(pattern, Pattern);
+
+        assert_eq!(Pattern + Pattern, Pattern);
+        assert_eq!(-Pattern, Pattern);
+        pattern.mul_acc(&Pattern, &Pattern);
+        assert_eq!(pattern, Pattern);
+    }
+}

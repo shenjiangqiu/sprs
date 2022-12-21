@@ -85,7 +85,7 @@ pub trait MatrixMarketRead: Sized {
 }
 impl MatrixMarketRead for Pattern {
     fn mm_read(_: &mut SplitWhitespace) -> Result<Self, crate::io::IoError> {
-        Ok(Pattern {})
+        Ok(Pattern)
     }
 }
 
