@@ -1,12 +1,13 @@
 //! Serialization and deserialization of sparse matrices
 
 use std::error::Error;
-use std::fmt;
 use std::fs::File;
 use std::io;
 use std::io::{Seek, SeekFrom, Write};
+use std::marker::PhantomData;
 use std::ops::Neg;
 use std::path::Path;
+use std::{fmt, mem};
 
 use crate::indexing::SpIndex;
 use crate::num_kinds::{NumKind, PrimitiveKind};
@@ -130,6 +131,52 @@ where
     let f = File::open(mm_file)?;
     let mut reader = io::BufReader::new(f);
     read_matrix_market_from_bufread(&mut reader)
+}
+pub fn read_matrix_market_head<N, I, P>(
+    mm_file: P,
+) -> Result<MatrixHead<N, I>, IoError>
+where
+    I: SpIndex,
+    N: PrimitiveKind
+        + Clone
+        + MatrixMarketRead
+        + MatrixMarketConjugate
+        + Neg<Output = N>,
+    P: AsRef<Path>,
+{
+    let mm_file = mm_file.as_ref();
+    let f = File::open(mm_file)?;
+    let mut reader = io::BufReader::new(f);
+    read_matrix_market_from_bufread_head(&mut reader)
+}
+
+pub struct MatrixHead<N, I> {
+    pub rows: usize,
+    pub cols: usize,
+    pub nnz: usize,
+    phantom: PhantomData<(N, I)>,
+}
+impl<N, I> MatrixHead<N, I> {
+    pub fn new(rows: usize, cols: usize, nnz: usize) -> Self {
+        Self {
+            rows,
+            cols,
+            nnz,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn ind_ptr_size(&self) -> usize {
+        (self.rows + 1) * mem::size_of::<usize>()
+    }
+
+    pub fn ind_size(&self) -> usize {
+        self.nnz * mem::size_of::<I>()
+    }
+
+    pub fn data_size(&self) -> usize {
+        self.nnz * mem::size_of::<N>()
+    }
 }
 
 /// Read a sparse matrix in the Matrix Market format from an `io::BufRead` and return a
@@ -276,6 +323,79 @@ where
         col_inds,
         data,
     ))
+}
+
+/// Read a sparse matrix in the Matrix Market format from an `io::BufRead` and return a
+/// corresponding triplet matrix.
+///
+/// Presently, only general matrices are supported, but symmetric and hermitian
+/// matrices should be supported in the future.
+pub fn read_matrix_market_from_bufread_head<N, I, R>(
+    reader: &mut R,
+) -> Result<MatrixHead<N, I>, IoError>
+where
+    I: SpIndex,
+    N: PrimitiveKind
+        + Clone
+        + Neg<Output = N>
+        + MatrixMarketRead
+        + MatrixMarketConjugate,
+    R: io::BufRead + ?Sized,
+{
+    // MatrixMarket format specifies lines of at most 1024 chars
+    let mut line = String::with_capacity(1024);
+
+    // Parse the header line, all tags are case insensitive.
+    reader.read_line(&mut line)?;
+    let header = line.to_lowercase();
+    let (sym_mode, data_type) = parse_header(&header)?;
+    let data_num_kind = match data_type {
+        DataType::Integer => NumKind::Integer,
+        DataType::Real => NumKind::Float,
+        DataType::Complex => NumKind::Complex,
+        DataType::Pattern => NumKind::Pattern,
+    };
+    // any type can be convert to pattern
+    if N::num_kind() != NumKind::Pattern && N::num_kind() != data_num_kind {
+        return Err(MismatchedMatrixMarketRead(N::num_kind(), data_num_kind));
+    }
+
+    // The header is followed by any number of comment or empty lines, skip
+    'header: loop {
+        line.clear();
+        let len = reader.read_line(&mut line)?;
+        if len == 0 || line.starts_with('%') {
+            continue 'header;
+        }
+        break;
+    }
+    // read shape and number of entries
+    // this is a line like:
+    // rows cols entries
+    // with arbitrary amounts of whitespace
+    let (rows, cols, entries) = {
+        let mut infos = line
+            .split_whitespace()
+            .filter_map(|s| s.parse::<usize>().ok());
+        let rows = infos.next().ok_or(BadMatrixMarketFile)?;
+        let cols = infos.next().ok_or(BadMatrixMarketFile)?;
+        let entries = infos.next().ok_or(BadMatrixMarketFile)?;
+        if infos.next().is_some() {
+            return Err(BadMatrixMarketFile);
+        }
+        (rows, cols, entries)
+    };
+    let nnz_max = if sym_mode == SymmetryMode::General {
+        entries
+    } else {
+        2 * entries
+    };
+    Ok(MatrixHead {
+        rows,
+        cols,
+        nnz: nnz_max,
+        phantom: PhantomData,
+    })
 }
 
 /// Write a sparse matrix into the matrix market format.
