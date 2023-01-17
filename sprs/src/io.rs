@@ -177,6 +177,10 @@ impl<N, I> MatrixHead<N, I> {
     pub fn data_size(&self) -> usize {
         self.nnz * mem::size_of::<N>()
     }
+
+    pub fn tri_size(&self) -> usize {
+        self.nnz * mem::size_of::<I>() * 2 + self.nnz * mem::size_of::<N>()
+    }
 }
 
 /// Read a sparse matrix in the Matrix Market format from an `io::BufRead` and return a
